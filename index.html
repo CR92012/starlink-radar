@@ -35,7 +35,6 @@
             font-family: monospace;
             font-size: 11px;
             z-index: 100;
-            pointer-events: none;
         }
     </style>
 </head>
@@ -49,16 +48,13 @@
 </div>
 
 <script>
-// 🌍 Viewer SIN TOKEN (OpenStreetMap)
+// 🌍 Viewer SIN TOKEN
 const viewer = new Cesium.Viewer('cesiumContainer', {
     shouldAnimate: true,
-
     terrainProvider: new Cesium.EllipsoidTerrainProvider(),
-
     imageryProvider: new Cesium.UrlTemplateImageryProvider({
         url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
     }),
-
     baseLayerPicker: false
 });
 
@@ -95,9 +91,8 @@ async function checkWeather(lat, lon) {
     const res = await fetch(
         `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${CONFIG.WEATHER_API_KEY}`
     );
-
     const data = await res.json();
-    let rain = data.list[0].pop || 0;
+    let rain = data.list?.[0]?.pop || 0;
     weatherImpact = 1 - (rain * 0.5);
 }
 
@@ -155,29 +150,38 @@ function simulateOutage(signal) {
     }
 }
 
-// 🛰️ TLE
+// 🛰️ TLE (LIMITADO 🔥)
 async function loadTLE() {
     const res = await fetch("https://celestrak.org/NORAD/elements/starlink.txt");
     return (await res.text()).split("\n");
 }
 
 function parseTLE(lines) {
-    for (let i = 0; i < lines.length; i += 3) {
+    let maxSats = 100; // 🔥 evita crash
+    let count = 0;
+
+    for (let i = 0; i < lines.length && count < maxSats; i += 3) {
         if (!lines[i+1] || !lines[i+2]) continue;
-        sats.push({
-            name: lines[i],
-            satrec: satellite.twoline2satrec(lines[i+1], lines[i+2])
-        });
+
+        try {
+            sats.push({
+                name: lines[i],
+                satrec: satellite.twoline2satrec(lines[i+1], lines[i+2])
+            });
+            count++;
+        } catch (e) {
+            continue;
+        }
     }
 }
 
-// 🛰️ posición
+// 🛰️ posición segura
 function getPos(satrec, time) {
     const pv = satellite.propagate(satrec, time);
-    const gmst = satellite.gstime(time);
-
     if (!pv.position) return null;
+    if (isNaN(pv.position.x)) return null;
 
+    const gmst = satellite.gstime(time);
     const geo = satellite.eciToGeodetic(pv.position, gmst);
 
     return {
@@ -192,17 +196,19 @@ function drawBeam(lat, lon, signal) {
     let radius = 800000 * signal;
 
     return viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(lon, lat),
         ellipse: {
             semiMajorAxis: radius,
             semiMinorAxis: radius,
             material: Cesium.Color.BLUE.withAlpha(0.15 * signal)
-        },
-        position: Cesium.Cartesian3.fromDegrees(lon, lat)
+        }
     });
 }
 
-// 🛰️ update
+// 🛰️ update optimizado
 function update() {
+    if (!userEntity) return;
+
     let now = new Date();
 
     entities.forEach(e => viewer.entities.remove(e));
@@ -217,7 +223,7 @@ function update() {
 
     sats.forEach(s => {
         let p = getPos(s.satrec, now);
-        if (!p || !userEntity) return;
+        if (!p) return;
 
         let userPos = userEntity.position.getValue();
         let satPos = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.height);
@@ -225,7 +231,8 @@ function update() {
         let distNow = Cesium.Cartesian3.distance(userPos, satPos);
         let minutes = timeUntilPass(s);
 
-        if (distNow > 2000000 && minutes === null) return;
+        // 🔥 filtro fuerte
+        if (distNow > 2000000 && (minutes === null || minutes > 20)) return;
 
         let isFuture = distNow > 2000000;
 
@@ -238,14 +245,11 @@ function update() {
         let sig = calculateSignal(distNow);
         let ping = calculatePing(distNow, sig);
 
-        if (isFuture) {
-            entity.point.color = Cesium.Color.GRAY;
-        } else {
-            entity.point.color =
-                sig > 0.7 ? Cesium.Color.GREEN :
-                sig > 0.4 ? Cesium.Color.YELLOW :
-                Cesium.Color.RED;
-        }
+        entity.point.color = isFuture
+            ? Cesium.Color.GRAY
+            : sig > 0.7 ? Cesium.Color.GREEN
+            : sig > 0.4 ? Cesium.Color.YELLOW
+            : Cesium.Color.RED;
 
         entity.label.text =
             (isFuture ? `🔮 EN ${minutes} min\n` : "") +
@@ -282,12 +286,12 @@ function update() {
         "Señal: " + Math.round(bestSignal*100) + "%";
 }
 
-// 🚀 init
+// 🚀 inicio
 (async () => {
     const tle = await loadTLE();
     parseTLE(tle);
 
-    setInterval(update, 3000);
+    setInterval(update, 5000); // 🔥 menos carga
     update();
 })();
 </script>
