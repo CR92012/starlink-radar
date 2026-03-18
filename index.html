@@ -48,7 +48,7 @@
 </div>
 
 <script>
-// 🌍 Viewer SIN TOKEN
+// 🌍 Viewer SIN TOKEN (estable)
 const viewer = new Cesium.Viewer('cesiumContainer', {
     shouldAnimate: true,
     terrainProvider: new Cesium.EllipsoidTerrainProvider(),
@@ -88,29 +88,33 @@ navigator.geolocation.getCurrentPosition(async pos => {
 
 // 🌩️ clima
 async function checkWeather(lat, lon) {
-    const res = await fetch(
-        `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${CONFIG.WEATHER_API_KEY}`
-    );
-    const data = await res.json();
-    let rain = data.list?.[0]?.pop || 0;
-    weatherImpact = 1 - (rain * 0.5);
+    try {
+        const res = await fetch(
+            `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${CONFIG.WEATHER_API_KEY}`
+        );
+        const data = await res.json();
+        let rain = data.list?.[0]?.pop || 0;
+        weatherImpact = 1 - (rain * 0.5);
+    } catch {
+        weatherImpact = 1;
+    }
 }
 
 // 🔮 tiempo hasta paso
-function timeUntilPass(sat, maxMinutes = 30) {
+function timeUntilPass(sat, maxMinutes = 20) {
     let now = new Date();
 
     for (let i = 0; i <= maxMinutes; i++) {
         let t = new Date(now.getTime() + i * 60000);
         let p = getPos(sat.satrec, t);
-        if (!p) continue;
+        if (!p || !userEntity) continue;
 
         let futurePos = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.height);
         let userPos = userEntity.position.getValue();
 
         let dist = Cesium.Cartesian3.distance(userPos, futurePos);
 
-        if (dist < 2000000) return i;
+        if (dist < 1500000) return i;
     }
 
     return null;
@@ -118,7 +122,7 @@ function timeUntilPass(sat, maxMinutes = 30) {
 
 // 📡 señal
 function calculateSignal(distance) {
-    let maxDist = 2000000;
+    let maxDist = 1500000;
     let signal = 1 - (distance / maxDist);
     signal = Math.max(0, signal);
     signal *= weatherImpact;
@@ -150,14 +154,14 @@ function simulateOutage(signal) {
     }
 }
 
-// 🛰️ TLE (LIMITADO 🔥)
+// 🛰️ TLE LIMITADO 🔥
 async function loadTLE() {
     const res = await fetch("https://celestrak.org/NORAD/elements/starlink.txt");
     return (await res.text()).split("\n");
 }
 
 function parseTLE(lines) {
-    let maxSats = 100; // 🔥 evita crash
+    let maxSats = 30; // 🔥 ULTRA SEGURO
     let count = 0;
 
     for (let i = 0; i < lines.length && count < maxSats; i += 3) {
@@ -169,43 +173,63 @@ function parseTLE(lines) {
                 satrec: satellite.twoline2satrec(lines[i+1], lines[i+2])
             });
             count++;
-        } catch (e) {
-            continue;
-        }
+        } catch {}
     }
 }
 
-// 🛰️ posición segura
+// 🛰️ POSICIÓN SEGURA 💪
 function getPos(satrec, time) {
-    const pv = satellite.propagate(satrec, time);
-    if (!pv.position) return null;
-    if (isNaN(pv.position.x)) return null;
+    try {
+        const pv = satellite.propagate(satrec, time);
+        if (!pv.position) return null;
 
-    const gmst = satellite.gstime(time);
-    const geo = satellite.eciToGeodetic(pv.position, gmst);
+        if (
+            isNaN(pv.position.x) ||
+            isNaN(pv.position.y) ||
+            isNaN(pv.position.z)
+        ) return null;
 
-    return {
-        lat: satellite.degreesLat(geo.latitude),
-        lon: satellite.degreesLong(geo.longitude),
-        height: geo.height * 1000
-    };
+        const gmst = satellite.gstime(time);
+        const geo = satellite.eciToGeodetic(pv.position, gmst);
+
+        let lat = satellite.degreesLat(geo.latitude);
+        let lon = satellite.degreesLong(geo.longitude);
+        let height = geo.height * 1000;
+
+        if (
+            isNaN(lat) || isNaN(lon) || isNaN(height) ||
+            Math.abs(lat) > 90 ||
+            Math.abs(lon) > 180 ||
+            height < 0 ||
+            height > 2000000
+        ) return null;
+
+        return { lat, lon, height };
+
+    } catch {
+        return null;
+    }
 }
 
-// 📡 beam
+// 📡 BEAM SEGURO
 function drawBeam(lat, lon, signal) {
-    let radius = 800000 * signal;
+    if (!isFinite(lat) || !isFinite(lon)) return null;
+
+    let radius = 200000 * signal;
+
+    if (radius <= 0 || radius > 300000) return null;
 
     return viewer.entities.add({
         position: Cesium.Cartesian3.fromDegrees(lon, lat),
         ellipse: {
             semiMajorAxis: radius,
             semiMinorAxis: radius,
-            material: Cesium.Color.BLUE.withAlpha(0.15 * signal)
+            material: Cesium.Color.BLUE.withAlpha(0.1)
         }
     });
 }
 
-// 🛰️ update optimizado
+// 🛰️ UPDATE
 function update() {
     if (!userEntity) return;
 
@@ -225,16 +249,17 @@ function update() {
         let p = getPos(s.satrec, now);
         if (!p) return;
 
+        if (!isFinite(p.lat) || !isFinite(p.lon) || !isFinite(p.height)) return;
+
         let userPos = userEntity.position.getValue();
         let satPos = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.height);
 
         let distNow = Cesium.Cartesian3.distance(userPos, satPos);
         let minutes = timeUntilPass(s);
 
-        // 🔥 filtro fuerte
-        if (distNow > 2000000 && (minutes === null || minutes > 20)) return;
+        if (distNow > 1500000 && (minutes === null || minutes > 15)) return;
 
-        let isFuture = distNow > 2000000;
+        let isFuture = distNow > 1500000;
 
         let entity = viewer.entities.add({
             position: satPos,
@@ -255,7 +280,8 @@ function update() {
             (isFuture ? `🔮 EN ${minutes} min\n` : "") +
             `${ping} ms\n📶 ${Math.round(sig*100)}%`;
 
-        beams.push(drawBeam(p.lat, p.lon, sig));
+        let beam = drawBeam(p.lat, p.lon, sig);
+        if (beam) beams.push(beam);
 
         if (!isFuture && sig > bestSignal) {
             bestSignal = sig;
@@ -291,7 +317,7 @@ function update() {
     const tle = await loadTLE();
     parseTLE(tle);
 
-    setInterval(update, 5000); // 🔥 menos carga
+    setInterval(update, 8000); // 🔥 ULTRA ESTABLE
     update();
 })();
 </script>
