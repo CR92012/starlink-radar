@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
     <title>Starlink Smart Radar PRO</title>
 
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Cesium.js"></script>
@@ -48,7 +49,19 @@
 </div>
 
 <script>
-const viewer = new Cesium.Viewer('cesiumContainer', { shouldAnimate: true });
+// 🌍 Viewer SIN TOKEN (OpenStreetMap)
+const viewer = new Cesium.Viewer('cesiumContainer', {
+    shouldAnimate: true,
+
+    terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+
+    imageryProvider: new Cesium.UrlTemplateImageryProvider({
+        url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    }),
+
+    baseLayerPicker: false
+});
+
 const audio = new Audio("https://www.soundjay.com/buttons/sounds/button-3.mp3");
 
 let userEntity, userLat, userLon;
@@ -72,8 +85,6 @@ navigator.geolocation.getCurrentPosition(async pos => {
     });
 
     viewer.flyTo(userEntity);
-
-    // 🎯 seguimiento centrado
     viewer.trackedEntity = userEntity;
 
     checkWeather(userLat, userLon);
@@ -104,9 +115,7 @@ function timeUntilPass(sat, maxMinutes = 30) {
 
         let dist = Cesium.Cartesian3.distance(userPos, futurePos);
 
-        if (dist < 2000000) {
-            return i;
-        }
+        if (dist < 2000000) return i;
     }
 
     return null;
