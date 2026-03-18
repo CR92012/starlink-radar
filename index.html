@@ -1,345 +1,154 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">
-    <title>Starlink Radar PRO</title>
+<meta charset="UTF-8">
+<title>Starlink Radar FIX</title>
 
-    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-    <script src="https://unpkg.com/satellite.js/dist/satellite.min.js"></script>
-    <script src="config.js"></script>
+<!-- Satellite -->
+<script src="https://unpkg.com/satellite.js@5.0.1/dist/satellite.min.js"></script>
 
-    <style>
-        html, body {
-            height: 100%;
-            margin: 0;
-            padding: 0;
-        }
+<script src="config.js"></script>
 
-        #map {
-            width: 100%;
-            height: 100vh;
-        }
-
-        #info {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            background: rgba(0,0,0,0.7);
-            color: white;
-            padding: 10px;
-            font-family: monospace;
-            z-index: 1000;
-        }
-
-        #alert {
-            position: absolute;
-            top: 80px;
-            left: 10px;
-            background: rgba(200,0,0,0.8);
-            color: white;
-            padding: 8px;
-            font-family: monospace;
-            z-index: 1000;
-            display: none;
-        }
-
-        #copyright {
-            position: absolute;
-            bottom: 5px;
-            right: 10px;
-            color: rgba(255,255,255,0.6);
-            font-size: 11px;
-            z-index: 1000;
-        }
-    </style>
+<style>
+html, body {
+    height: 100%;
+    margin: 0;
+}
+#map {
+    height: 100vh;
+}
+#info {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: black;
+    color: lime;
+    padding: 10px;
+    z-index: 1000;
+    font-family: monospace;
+}
+</style>
 </head>
 <body>
 
 <div id="map"></div>
-<div id="info">Iniciando...</div>
-<div id="alert">⚠️ Tormenta fuerte detectada</div>
-<div id="copyright">© 2026 - 2030 Hecho por Carlos Rodriguez</div>
+<div id="info">Cargando...</div>
 
 <script>
-// 🔊 sonido bip
-function playBeep() {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    osc.frequency.setValueAtTime(1000, ctx.currentTime);
-    osc.connect(ctx.destination);
-    osc.start();
-    setTimeout(() => osc.stop(), 120);
+// 🔍 DEBUG
+console.log("Leaflet:", typeof L);
+console.log("Satellite:", typeof satellite);
+
+// 🚨 SI FALLA LIBRERÍA
+if (typeof L === "undefined") {
+    alert("Leaflet NO cargó");
+}
+if (typeof satellite === "undefined") {
+    alert("Satellite.js NO cargó");
 }
 
-// 🌍 mapa
-const map = L.map('map', {
-    zoomControl: true
-}).setView([0, 0], 2);
+// 🌍 MAPA
+const map = L.map('map').setView([-31.4, -64.2], 5);
 
-// fix render
-setTimeout(() => {
-    map.invalidateSize();
-}, 500);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19
+}).addTo(map);
 
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+// 📍 marcador usuario
+let userLatLng = [-31.4, -64.2];
+L.circleMarker(userLatLng, {
+    radius: 6,
+    color: "white"
+}).addTo(map);
 
-let userMarker;
-let sats = [];
-
-let satMarkers = [];
-let beams = [];
-
-let currentSatId = null;
-
-let weatherImpact = 1;
-let stormAlert = false;
-
-// 📍 ubicación PRO
-function initLocation() {
-    if (!navigator.geolocation) {
-        alert("Geolocalización no soportada");
-        return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-        pos => {
-            let lat = pos.coords.latitude;
-            let lon = pos.coords.longitude;
-
-            map.setView([lat, lon], 6);
-
-            userMarker = L.circleMarker([lat, lon], {
-                radius: 6,
-                color: "white"
-            }).addTo(map);
-
-            checkWeather(lat, lon);
-        },
-        err => {
-            console.warn("Error ubicación:", err.message);
-
-            // fallback Córdoba
-            let lat = -31.4;
-            let lon = -64.2;
-
-            map.setView([lat, lon], 6);
-
-            userMarker = L.circleMarker([lat, lon], {
-                radius: 6,
-                color: "red"
-            }).addTo(map);
-
-            document.getElementById("info").innerText =
-                "⚠️ Ubicación no disponible\nModo Córdoba";
-        },
-        {
-            enableHighAccuracy: true,
-            timeout: 10000,
-            maximumAge: 0
-        }
-    );
-}
-
-// 🌩️ clima
-async function checkWeather(lat, lon) {
-    try {
-        let res = await fetch(
-            `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${CONFIG.WEATHER_API_KEY}`
-        );
-        let data = await res.json();
-
-        let rain = data.list?.[0]?.pop || 0;
-
-        weatherImpact = 1 - (rain * 0.5);
-        stormAlert = rain > 0.7;
-
-        document.getElementById("alert").style.display =
-            stormAlert ? "block" : "none";
-
-    } catch {
-        weatherImpact = 1;
-    }
-}
+// 🛰️ prueba simple (SI ESTO NO APARECE → el problema es JS)
+L.circleMarker([-30, -60], {
+    radius: 6,
+    color: "red"
+}).addTo(map).bindPopup("SAT TEST");
 
 // 🛰️ TLE
 async function loadTLE() {
-    let res = await fetch("https://celestrak.org/NORAD/elements/starlink.txt");
-    return (await res.text()).split("\n");
-}
+    try {
+        let res = await fetch("https://celestrak.org/NORAD/elements/starlink.txt");
+        let text = await res.text();
 
-function parseTLE(lines) {
-    let max = 60;
+        console.log("TLE cargado");
+        return text.split("\n");
 
-    for (let i = 0; i < lines.length && sats.length < max; i += 3) {
-        try {
-            if (!lines[i+1] || !lines[i+2]) continue;
-
-            sats.push({
-                name: lines[i],
-                satrec: satellite.twoline2satrec(lines[i+1], lines[i+2])
-            });
-        } catch {}
+    } catch (e) {
+        console.error("Error TLE", e);
+        return [];
     }
 }
 
-// 🛰️ posición
-function getPos(satrec, time) {
+let satrecList = [];
+
+function parseTLE(lines) {
+    for (let i = 0; i < lines.length; i += 3) {
+        try {
+            if (!lines[i+1] || !lines[i+2]) continue;
+
+            satrecList.push(
+                satellite.twoline2satrec(lines[i+1], lines[i+2])
+            );
+
+            if (satrecList.length > 10) break;
+
+        } catch (e) {
+            console.warn("TLE error", e);
+        }
+    }
+}
+
+// 🛰️ POSICIÓN
+function getPos(satrec) {
     try {
+        let time = new Date();
         let pv = satellite.propagate(satrec, time);
+
         if (!pv.position) return null;
 
         let gmst = satellite.gstime(time);
         let geo = satellite.eciToGeodetic(pv.position, gmst);
 
-        let lat = satellite.degreesLat(geo.latitude);
-        let lon = satellite.degreesLong(geo.longitude);
+        return [
+            satellite.degreesLat(geo.latitude),
+            satellite.degreesLong(geo.longitude)
+        ];
 
-        if (!isFinite(lat) || !isFinite(lon)) return null;
-
-        return { lat, lon };
     } catch {
         return null;
     }
 }
 
-// 🔮 predicción
-function willPass(sat, userLatLng) {
-    let now = new Date();
-
-    for (let i = 1; i <= 20; i++) {
-        let t = new Date(now.getTime() + i * 60000);
-        let p = getPos(sat.satrec, t);
-        if (!p) continue;
-
-        let dist = map.distance(userLatLng, [p.lat, p.lon]) / 1000;
-
-        if (dist < 1500) return i;
-    }
-
-    return null;
-}
-
-// 📡 señal
-function calcSignal(dist) {
-    let max = 1500;
-    let s = 1 - (dist / max);
-    return Math.max(0, s) * weatherImpact;
-}
-
-// 📶 ping
-function calcPing(dist, signal) {
-    return Math.round(dist * 2 + Math.random()*20 + (1-signal)*100);
-}
-
-// 🚀 update optimizado
+// 🚀 UPDATE SIMPLE
 function update() {
-    if (!userMarker) return;
+    document.getElementById("info").innerText = "Satélites: " + satrecList.length;
 
-    let now = new Date();
-    let userLatLng = userMarker.getLatLng();
-
-    satMarkers.forEach(m => map.removeLayer(m));
-    beams.forEach(b => map.removeLayer(b));
-
-    satMarkers = [];
-    beams = [];
-
-    let bestSat = null;
-    let bestSignal = 0;
-    let bestPing = 0;
-
-    let nextSat = null;
-    let nextTime = 999;
-
-    sats.forEach((s, index) => {
-        let p = getPos(s.satrec, now);
+    satrecList.forEach(s => {
+        let p = getPos(s);
         if (!p) return;
 
-        let dist = map.distance(userLatLng, [p.lat, p.lon]) / 1000;
-        let signal = calcSignal(dist);
-
-        if (dist < 1500 && signal > bestSignal) {
-            bestSignal = signal;
-            bestSat = { id: index, pos: p, dist };
-        }
-
-        let future = willPass(s, userLatLng);
-        if (future !== null && future < nextTime) {
-            nextTime = future;
-            nextSat = s;
-        }
-    });
-
-    // 🟢 actual
-    if (bestSat) {
-        let ping = calcPing(bestSat.dist, bestSignal);
-
-        let marker = L.circleMarker([bestSat.pos.lat, bestSat.pos.lon], {
-            radius: 7,
+        L.circleMarker(p, {
+            radius: 3,
             color: "cyan"
         }).addTo(map);
-
-        let beam = L.circle([bestSat.pos.lat, bestSat.pos.lon], {
-            radius: 200000 * bestSignal,
-            color: "blue",
-            fillOpacity: 0.15
-        }).addTo(map);
-
-        satMarkers.push(marker);
-        beams.push(beam);
-
-        if (currentSatId !== bestSat.id) {
-            currentSatId = bestSat.id;
-            playBeep();
-        }
-
-        bestPing = ping;
-    }
-
-    // 🔮 futuro
-    if (nextSat) {
-        let futurePos = getPos(
-            nextSat.satrec,
-            new Date(Date.now() + nextTime * 60000)
-        );
-
-        if (futurePos) {
-            let marker = L.circleMarker([futurePos.lat, futurePos.lon], {
-                radius: 5,
-                color: "gray"
-            }).addTo(map);
-
-            satMarkers.push(marker);
-        }
-    }
-
-    document.getElementById("info").innerText =
-        "🌐 Starlink Radar PRO\n" +
-        (stormAlert ? "⚠️ TORMENTA\n" : "") +
-        "Ping: " + bestPing + " ms\n" +
-        "Señal: " + Math.round(bestSignal*100) + "%\n" +
-        (nextSat ? `Próximo en: ${nextTime} min` : "");
+    });
 }
 
-// 🚀 init
+// 🚀 INIT
 (async () => {
-    initLocation();
-
     let tle = await loadTLE();
     parseTLE(tle);
 
+    console.log("Satélites:", satrecList.length);
+
     setInterval(update, 5000);
-
-    setInterval(() => {
-        if (userMarker) {
-            let pos = userMarker.getLatLng();
-            checkWeather(pos.lat, pos.lng);
-        }
-    }, 60000);
-
-    update();
 })();
 </script>
 
