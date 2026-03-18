@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Starlink Smart Radar PRO</title>
+
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+
+    <script src="https://unpkg.com/satellite.js/dist/satellite.min.js"></script>
+    <script src="config.js"></script>
+
+    <style>
+        html, body, #cesiumContainer {
+            width: 100%; height: 100%; margin: 0;
+        }
+
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 12px;
+            font-family: monospace;
+            z-index: 100;
+            white-space: pre-line;
+        }
+
+        #copyright {
+            position: absolute;
+            bottom: 5px;
+            right: 10px;
+            color: rgba(255,255,255,0.5);
+            font-family: monospace;
+            font-size: 11px;
+            z-index: 100;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="cesiumContainer"></div>
+<div id="info">Inicializando...</div>
+
+<div id="copyright">
+    © 2026 - 2030 Hecho por Carlos Rodriguez
+</div>
+
+<script>
+const viewer = new Cesium.Viewer('cesiumContainer', { shouldAnimate: true });
+const audio = new Audio("https://www.soundjay.com/buttons/sounds/button-3.mp3");
+
+let userEntity, userLat, userLon;
+let sats = [];
+let entities = [];
+let beams = [];
+
+let weatherImpact = 1;
+let currentSat = null;
+let connectionActive = true;
+let outageTimer = 0;
+
+// 📍 ubicación
+navigator.geolocation.getCurrentPosition(async pos => {
+    userLat = pos.coords.latitude;
+    userLon = pos.coords.longitude;
+
+    userEntity = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(userLon, userLat),
+        point: { pixelSize: 10, color: Cesium.Color.WHITE }
+    });
+
+    viewer.flyTo(userEntity);
+
+    // 🎯 seguimiento centrado
+    viewer.trackedEntity = userEntity;
+
+    checkWeather(userLat, userLon);
+});
+
+// 🌩️ clima
+async function checkWeather(lat, lon) {
+    const res = await fetch(
+        `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${CONFIG.WEATHER_API_KEY}`
+    );
+
+    const data = await res.json();
+    let rain = data.list[0].pop || 0;
+    weatherImpact = 1 - (rain * 0.5);
+}
+
+// 🔮 tiempo hasta paso
+function timeUntilPass(sat, maxMinutes = 30) {
+    let now = new Date();
+
+    for (let i = 0; i <= maxMinutes; i++) {
+        let t = new Date(now.getTime() + i * 60000);
+        let p = getPos(sat.satrec, t);
+        if (!p) continue;
+
+        let futurePos = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.height);
+        let userPos = userEntity.position.getValue();
+
+        let dist = Cesium.Cartesian3.distance(userPos, futurePos);
+
+        if (dist < 2000000) {
+            return i;
+        }
+    }
+
+    return null;
+}
+
+// 📡 señal
+function calculateSignal(distance) {
+    let maxDist = 2000000;
+    let signal = 1 - (distance / maxDist);
+    signal = Math.max(0, signal);
+    signal *= weatherImpact;
+    return signal;
+}
+
+// 📶 ping
+function calculatePing(distance, signal) {
+    let base = (distance / 299792458) * 1000 * 2;
+    let jitter = Math.random() * 20;
+    let penalty = (1 - signal) * 100;
+    return (base + jitter + penalty).toFixed(0);
+}
+
+// ⚡ cortes
+function simulateOutage(signal) {
+    if (!connectionActive) {
+        outageTimer--;
+        if (outageTimer <= 0) connectionActive = true;
+        return;
+    }
+
+    let chance = (1 - signal) * 0.1;
+
+    if (Math.random() < chance) {
+        connectionActive = false;
+        outageTimer = Math.floor(Math.random() * 5) + 2;
+        audio.play();
+    }
+}
+
+// 🛰️ TLE
+async function loadTLE() {
+    const res = await fetch("https://celestrak.org/NORAD/elements/starlink.txt");
+    return (await res.text()).split("\n");
+}
+
+function parseTLE(lines) {
+    for (let i = 0; i < lines.length; i += 3) {
+        if (!lines[i+1] || !lines[i+2]) continue;
+        sats.push({
+            name: lines[i],
+            satrec: satellite.twoline2satrec(lines[i+1], lines[i+2])
+        });
+    }
+}
+
+// 🛰️ posición
+function getPos(satrec, time) {
+    const pv = satellite.propagate(satrec, time);
+    const gmst = satellite.gstime(time);
+
+    if (!pv.position) return null;
+
+    const geo = satellite.eciToGeodetic(pv.position, gmst);
+
+    return {
+        lat: satellite.degreesLat(geo.latitude),
+        lon: satellite.degreesLong(geo.longitude),
+        height: geo.height * 1000
+    };
+}
+
+// 📡 beam
+function drawBeam(lat, lon, signal) {
+    let radius = 800000 * signal;
+
+    return viewer.entities.add({
+        ellipse: {
+            semiMajorAxis: radius,
+            semiMinorAxis: radius,
+            material: Cesium.Color.BLUE.withAlpha(0.15 * signal)
+        },
+        position: Cesium.Cartesian3.fromDegrees(lon, lat)
+    });
+}
+
+// 🛰️ update
+function update() {
+    let now = new Date();
+
+    entities.forEach(e => viewer.entities.remove(e));
+    beams.forEach(b => viewer.entities.remove(b));
+
+    entities = [];
+    beams = [];
+
+    let bestSat = null;
+    let bestSignal = 0;
+    let bestPing = 0;
+
+    sats.forEach(s => {
+        let p = getPos(s.satrec, now);
+        if (!p || !userEntity) return;
+
+        let userPos = userEntity.position.getValue();
+        let satPos = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.height);
+
+        let distNow = Cesium.Cartesian3.distance(userPos, satPos);
+        let minutes = timeUntilPass(s);
+
+        if (distNow > 2000000 && minutes === null) return;
+
+        let isFuture = distNow > 2000000;
+
+        let entity = viewer.entities.add({
+            position: satPos,
+            point: { pixelSize: isFuture ? 4 : 6 },
+            label: { show: true }
+        });
+
+        let sig = calculateSignal(distNow);
+        let ping = calculatePing(distNow, sig);
+
+        if (isFuture) {
+            entity.point.color = Cesium.Color.GRAY;
+        } else {
+            entity.point.color =
+                sig > 0.7 ? Cesium.Color.GREEN :
+                sig > 0.4 ? Cesium.Color.YELLOW :
+                Cesium.Color.RED;
+        }
+
+        entity.label.text =
+            (isFuture ? `🔮 EN ${minutes} min\n` : "") +
+            `${ping} ms\n📶 ${Math.round(sig*100)}%`;
+
+        beams.push(drawBeam(p.lat, p.lon, sig));
+
+        if (!isFuture && sig > bestSignal) {
+            bestSignal = sig;
+            bestSat = entity;
+            bestPing = ping;
+        }
+
+        entities.push(entity);
+    });
+
+    simulateOutage(bestSignal);
+
+    if (bestSat && bestSat !== currentSat && connectionActive) {
+        currentSat = bestSat;
+        audio.play();
+    }
+
+    if (currentSat) {
+        currentSat.point.color = connectionActive ? Cesium.Color.CYAN : Cesium.Color.BLACK;
+        currentSat.point.pixelSize = 12;
+        currentSat.label.text += connectionActive ? "\n📡 CONECTADO" : "\n❌ SIN SEÑAL";
+    }
+
+    document.getElementById("info").innerText =
+        "🌐 Starlink Smart Radar\n" +
+        (connectionActive ? "🟢 ONLINE\n" : "🔴 CORTE\n") +
+        "Ping: " + bestPing + " ms\n" +
+        "Señal: " + Math.round(bestSignal*100) + "%";
+}
+
+// 🚀 init
+(async () => {
+    const tle = await loadTLE();
+    parseTLE(tle);
+
+    setInterval(update, 3000);
+    update();
+})();
+</script>
+
+</body>
+</html>
